@@ -1,158 +1,60 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
 
-# --- CONFIGURAZIONE ESTETICA GOTHIC DARK ---
-st.set_page_config(page_title="GOTHIC CORE-AI", layout="centered")
-
-# Import Google Font: UnifrakturMaguntia (Gothic style)
+# --- STYLE GOTHIC DARK ---
+st.set_page_config(page_title="GOTHIC SYNDICATE v4", layout="wide")
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Old+Standard+TT:italic,bold&display=swap');
-
-    .stApp { background-color: #000000; color: #e0e0e0; }
-    
-    /* Font Gotico per i Titoli */
-    h1, h2, .gothic-title {
-        font-family: 'UnifrakturMaguntia', cursive;
-        color: #ffffff;
-        font-size: 3.5rem !important;
-        text-shadow: 2px 2px 4px #444;
-        text-align: center;
-    }
-
-    /* Font per il resto del testo */
-    * { font-family: 'Old Standard TT', serif; }
-
-    /* Input e Sidebar Black Edition */
-    .stNumberInput input, .stTextInput input, .stSelectbox div {
-        background-color: #0a0a0a !important;
-        color: #ffffff !important;
-        border: 1px solid #222 !important;
-    }
-
-    /* Bottone Monumentale */
-    .stButton>button {
-        width: 100%;
-        border-radius: 0px;
-        height: 4em;
-        background-color: #ffffff;
-        color: #000000;
-        border: 1px solid #ffffff;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 3px;
-        transition: 0.5s;
-    }
-    .stButton>button:hover { background-color: #444; color: #fff; }
-
-    /* Metriche */
-    div[data-testid="stMetricValue"] { color: #ffffff !important; font-size: 2.8rem; border-bottom: 1px solid #333; }
-    hr { border: 0.5px solid #333; }
+    .stApp { background-color: #050505; color: #e0e0e0; }
+    h1, .gothic-title { font-family: 'UnifrakturMaguntia', cursive; color: #ffffff; text-align: center; font-size: 3.5rem !important; }
+    .stButton>button { width: 100%; background-color: #fff; color: #000; font-weight: 900; border: 2px solid #ff0000; }
+    .stButton>button:hover { background-color: #ff0000; color: #fff; }
     </style>
     """, unsafe_allow_html=True)
 
-def mcts_ultra_engine(mu_c, mu_o, n_sim=20000):
-    """Simulazione MCTS ad alta densità"""
-    v_c, p, v_o, o25 = 0, 0, 0, 0
+# --- MOTORE MATEMATICO ---
+def run_analysis(row, n_sim=15000):
+    # Dati dalla riga
+    mu_c = ((row['xG_Home'] + row['xGA_Away']) / 2) * (1 + (row['ELO_Home'] - row['ELO_Away'])/1000)
+    mu_o = ((row['xG_Away'] + row['xGA_Home']) / 2) * (1 - (row['ELO_Home'] - row['ELO_Away'])/1000)
+    
     sim_c = np.random.poisson(max(0.01, mu_c), n_sim)
     sim_o = np.random.poisson(max(0.01, mu_o), n_sim)
     
-    v_c = np.sum(sim_c > sim_o)
-    p = np.sum(sim_c == sim_o)
-    v_o = np.sum(sim_c < sim_o)
-    o25 = np.sum((sim_c + sim_o) > 2.5)
+    p1 = np.sum(sim_c > sim_o) / n_sim
+    px = np.sum(sim_c == sim_o) / n_sim
+    p2 = np.sum(sim_c < sim_o) / n_sim
     
-    return v_c/n_sim, p/n_sim, v_o/n_sim, o25/n_sim
+    # Kelly & Edge
+    implied_1 = 1 / row['Quota1']
+    edge = p1 - implied_1
+    b = row['Quota1'] - 1
+    kelly = max(0, ((b * p1) - (1-p1)) / b) if row['Quota1'] > 1 else 0
+    
+    return pd.Series([f"{p1:.1%}", f"{px:.1%}", f"{p2:.1%}", f"{edge:.1%}", f"{kelly:.2%}"])
 
 # --- INTERFACCIA ---
-st.markdown('<div class="gothic-title">Gothic Core-AI</div>', unsafe_allow_html=True)
-st.caption("THE ULTIMATE PRE-MATCH PROGNOSTICATOR")
+st.markdown('<div class="gothic-title">Gothic Syndicate: Bulk Mode</div>', unsafe_allow_html=True)
 
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("### 🏰 Home Sanctum")
-    name_c = st.text_input("Nome Squadra", "HOME TEAM", key="nc")
-    xg_c = st.number_input("xG Attacco (Stagione)", value=1.6, key="xc")
-    xga_c = st.number_input("xG Difesa (Subiti)", value=1.0, key="xac")
-    corn_c = st.number_input("Corner Medi", value=5, key="cc")
+tab1, tab2 = st.tabs(["📁 CARICA PALINSESTO CSV", "✍️ INSERIMENTO MANUALE"])
 
-with col2:
-    st.markdown("### ⚔️ Away Invaders")
-    name_o = st.text_input("Nome Squadra ", "AWAY TEAM", key="no")
-    xg_o = st.number_input("xG Attacco (Stagione) ", value=1.3, key="xo")
-    xga_o = st.number_input("xG Difesa (Subiti) ", value=1.2, key="xao")
-    corn_o = st.number_input("Corner Medi ", value=4, key="co")
+with tab1:
+    uploaded_file = st.file_uploader("Trascina qui il tuo file .csv del weekend", type="csv")
+    if uploaded_file:
+        df = pd.read_csv(uploaded_file)
+        if st.button("PROCESSA INTERO PALINSESTO"):
+            # Applica il motore a ogni riga
+            results = df.apply(run_analysis, axis=1)
+            results.columns = ['Prob_1', 'Prob_X', 'Prob_2', 'Edge_1', 'Kelly_1']
+            final_df = pd.concat([df[['Home', 'Away', 'Quota1']], results], axis=1)
+            
+            st.markdown("### 📜 RISULTATI QUANTITATIVI")
+            st.dataframe(final_df.style.background_gradient(subset=['Edge_1'], cmap='RdYlGn'))
+            st.success("Analisi completata. Le righe in verde scuro sono le tue 'Value Bets'.")
 
-st.markdown("---")
+with tab2:
+    st.write("Usa questa sezione per analisi singole rapide (stesso codice precedente).")
+    # ... (qui andrebbe il codice del messaggio precedente per l'inserimento manuale)
 
-with st.expander("🕯️ VARIABILI OCCULTE (BOOKMAKER LOGIC)"):
-    f1, f2 = st.columns(2)
-    with f1:
-        st.write("**Fattori Interni**")
-        forma_c = st.select_slider("Stato di Forma (1-5)", options=[1,2,3,4,5], value=3, key="f1")
-        motivazione_c = st.select_slider("Importanza Match", options=["Bassa", "Media", "Vitale"], value="Media")
-        assenze_c = st.selectbox("Infortunati Chiave", ["Nessuno", "1-2 Giocatori", "Assenze Gravi"], key="a1")
-    with f2:
-        st.write("**Fattori Esterni**")
-        forma_o = st.select_slider("Stato di Forma (1-5) ", options=[1,2,3,4,5], value=3, key="f2")
-        field_advantage = st.checkbox("Fattore Campo (Pubblico Caldo)", value=True)
-        tattica_o = st.selectbox("Atteggiamento", ["Equilibrato", "Bus davanti alla porta", "Contropiede"], key="t2")
-
-if st.button("Invoke Prediction"):
-    # Logica Matematica Superiore
-    mu_c = (xg_c + xga_o) / 2
-    mu_o = (xg_o + xga_c) / 2
-    
-    # Applicazione Moltiplicatori
-    # 1. Forma (Base 3)
-    mu_c *= (forma_c / 3)
-    mu_o *= (forma_o / 3)
-    
-    # 2. Corner (Pressione)
-    mu_c += (corn_c * 0.04)
-    mu_o += (corn_o * 0.04)
-    
-    # 3. Importanza/Motivazione
-    if motivazione_c == "Vitale": mu_c *= 1.2
-    
-    # 4. Assenze
-    if assenze_c == "Assenze Gravi": mu_c *= 0.8
-    
-    # 5. Fattore Campo
-    if field_advantage: mu_c *= 1.1
-    
-    # 6. Tattica Ospite
-    if tattica_o == "Bus davanti alla porta":
-        mu_o *= 0.7
-        mu_c *= 0.85 # Partita bloccata
-        
-    # Esecuzione MCTS 20k
-    p1, px, p2, o25 = mcts_ultra_engine(mu_c, mu_o)
-    markov = (p1**2 + px**2 + p2**2)
-
-    # OUTPUT FINALE
-    st.markdown("---")
-    st.markdown(f"## {name_c} vs {name_o}")
-    
-    r1, r2, r3 = st.columns(3)
-    r1.metric("CHANCE 1", f"{p1:.1%}")
-    r2.metric("CHANCE X", f"{px:.1%}")
-    r3.metric("CHANCE 2", f"{p2:.1%}")
-    
-    st.markdown("---")
-    
-    v1, v2 = st.columns(2)
-    with v1:
-        st.write("**PROBABILITÀ OVER 2.5**")
-        st.header(f"{o25:.1%}")
-    with v2:
-        st.write("**STABILITÀ MARKOV**")
-        status = "STABLE" if markov > 0.48 else "CHAOTIC"
-        st.header(status)
-        st.caption(f"Index: {markov:.2f}")
-
-    if p1 > 0.60 and markov > 0.50:
-        st.success("VERDICT: STRONG HOME DOMINANCE")
-    elif o25 > 0.70:
-        st.success("VERDICT: HIGH SCORE EXPECTED")
