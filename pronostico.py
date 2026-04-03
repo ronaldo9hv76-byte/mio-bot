@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="GOTHIC SYNDICATE v8", layout="wide")
+st.set_page_config(page_title="GOTHIC SYNDICATE v8.1", layout="wide")
 
 # --- STILE GOTHIC DARK ---
 st.markdown("""
@@ -18,9 +18,13 @@ st.markdown("""
 
 # --- MOTORE MATEMATICO ---
 def run_analysis_engine(xg_h, xga_h, elo_h, xg_a, xga_a, elo_a, q1, qX, q2, n_sim=20000):
-    # Protezione dati vuoti
-    vals = [xg_h, xga_h, elo_h, xg_a, xga_a, elo_a]
-    xg_h, xga_h, elo_h, xg_a, xga_a, elo_a = [float(v) if str(v).strip() != '' else 0.0 for v in vals]
+    # Protezione e conversione dati
+    try:
+        xg_h, xga_h, elo_h = float(xg_h), float(xga_h), float(elo_h)
+        xg_a, xga_a, elo_a = float(xg_a), float(xga_a), float(elo_a)
+        q1, qX, q2 = float(q1), float(qX), float(q2)
+    except:
+        return [0]*10 # Ritorna zeri in caso di errore dati
     
     elo_diff = (elo_h - elo_a) / 1000
     mu_c = ((xg_h + xga_a) / 2) * (1 + elo_diff)
@@ -48,51 +52,44 @@ def run_analysis_engine(xg_h, xga_h, elo_h, xg_a, xga_a, elo_a, q1, qX, q2, n_si
     return p1, px, p2, e1, k1, eX, kX, e2, k2, uo25
 
 # --- INTERFACCIA ---
-st.markdown('<div class="gothic-title">Gothic Syndicate: Ultimate Version</div>', unsafe_allow_html=True)
+st.markdown('<div class="gothic-title">Gothic Syndicate: Ultimate V8.1</div>', unsafe_allow_html=True)
 
-tab1, tab2 = st.tabs(["📊 ANALISI EXCEL", "✍️ MANUALE"])
+uploaded_file = st.file_uploader("Carica il tuo file Excel (.xlsx)", type="xlsx")
 
-with tab1:
-    uploaded_file = st.file_uploader("Carica .xlsx", type="xlsx")
+if uploaded_file:
+    df = pd.read_excel(uploaded_file).fillna(0)
     
-    if uploaded_file:
-        df = pd.read_excel(uploaded_file).fillna(0)
-        
-        if st.button("PROCESSA PALINSESTO"):
-            with st.spinner('Calcolo in corso...'):
-                try:
-                    res = df.apply(lambda r: run_analysis_engine(
-                        r['xG_Home'], r['xGA_Home'], r['ELO_Home'],
-                        r['xG_Away'], r['xGA_Away'], r['ELO_Away'],
-                        r['Quota1'], r['QuotaX'], r['Quota2']
-                    ), axis=1)
-                    
-                    cols = ['P_1', 'P_X', 'P_2', 'Edge_1', 'Kelly_1', 'Edge_X', 'Kelly_X', 'Edge_2', 'Kelly_2', 'UO_Prob']
-                    df[cols] = pd.DataFrame(res.tolist(), index=df.index)
-                    
-                    # Colonna Consigliata U/O 2.5
-                    df['U/O 2,5'] = df['UO_Prob'].apply(lambda x: 'OVER' if x > 0.58 else 'UNDER')
+    if st.button("PROCESSA PALINSESTO"):
+        with st.spinner('L’Oracolo sta calcolando...'):
+            try:
+                res = df.apply(lambda r: run_analysis_engine(
+                    r['xG_Home'], r['xGA_Home'], r['ELO_Home'],
+                    r['xG_Away'], r['xGA_Away'], r['ELO_Away'],
+                    r['Quota1'], r['QuotaX'], r['Quota2']
+                ), axis=1)
+                
+                cols = ['P_1', 'P_X', 'P_2', 'Edge_1', 'Kelly_1', 'Edge_X', 'Kelly_X', 'Edge_2', 'Kelly_2', 'UO_Prob']
+                df[cols] = pd.DataFrame(res.tolist(), index=df.index)
+                df['U/O 2,5'] = df['UO_Prob'].apply(lambda x: 'OVER' if x > 0.58 else 'UNDER')
 
-                    st.markdown("### 📜 RISULTATI COMPLETI")
-                    
-                    # Visualizzazione tutte le colonne
-                    view_cols = ['Home', 'Away', 'P_1', 'Edge_1', 'Kelly_1', 'P_X', 'Edge_X', 'Kelly_X', 'P_2', 'Edge_2', 'Kelly_2', 'U/O 2,5', 'UO_Prob']
-                    
-                    def color_uo(val):
-                        color = 'background-color: green' if val == 'OVER' else 'background-color: red'
-                        return color
+                # Funzione di stile aggiornata per compatibilità
+                def style_uo(val):
+                    color = '#006400' if val == 'OVER' else '#8B0000' # Verde scuro / Rosso scuro
+                    return f'background-color: {color}; color: white; font-weight: bold'
 
-                    st.dataframe(df[view_cols].style.format({
+                view_cols = ['Home', 'Away', 'P_1', 'Edge_1', 'Kelly_1', 'P_X', 'Edge_X', 'P_2', 'Edge_2', 'U/O 2,5', 'UO_Prob']
+                
+                # Visualizzazione finale
+                st.dataframe(
+                    df[view_cols].style.format({
                         'P_1': '{:.1%}', 'Edge_1': '{:.1%}', 'Kelly_1': '{:.1%}',
                         'P_X': '{:.1%}', 'Edge_X': '{:.1%}', 'Kelly_X': '{:.1%}',
                         'P_2': '{:.1%}', 'Edge_2': '{:.1%}', 'Kelly_2': '{:.1%}',
                         'UO_Prob': '{:.1%}'
-                    }).applymap(color_uo, subset=['U/O 2,5'])
-                      .background_gradient(subset=['Edge_1', 'Edge_X', 'Edge_2'], cmap='RdYlGn'))
-                    
-                except Exception as e:
-                    st.error(f"Errore: {e}")
+                    }).map(style_uo, subset=['U/O 2,5']) # Usiamo .map invece di .applymap
+                      .background_gradient(subset=['Edge_1', 'Edge_X', 'Edge_2'], cmap='RdYlGn')
+                )
+                
+            except Exception as e:
+                st.error(f"Errore tecnico: {e}")
 
-with tab2:
-    st.write("Inserimento manuale rapido...")
-    # (Logica manuale semplificata omessa per brevità, focalizzata su Excel)
