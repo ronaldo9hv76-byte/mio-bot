@@ -1119,4 +1119,3 @@ if st.button("⚡ ESEGUI ANALISI PROFESSIONALE"):
                 st.info("Kelly = 0% — nessun valore atteso positivo. Non puntare.")
 
     st.success("✅ Analisi v11.0 Pro completata.")
-```
