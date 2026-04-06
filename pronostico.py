@@ -943,7 +943,7 @@ for i, row in df_partite.iterrows():
         h = row.get("Home", f"Riga {i}")
         a = row.get("Away", "")
         for msg in w:
-            all_warnings.append(f"<b>{h} vs {a}</b> — {msg}")
+            all_warnings.append(f"<b>{h} vs {a}</b> - {msg}")
 
 if all_warnings:
     with st.expander(f"⚠️ {len(all_warnings)} avvisi sui dati di input"):
@@ -1063,7 +1063,7 @@ if st.button("⚡ ESEGUI ANALISI PROFESSIONALE"):
         consiglio = row.get("CONSIGLIO", "")
         det = results[i].get("detail", {})
 
-        with st.expander(f"⚔️  {home_n}  vs  {away_n}  —  {consiglio}"):
+        with st.expander(f"⚔️  {home_n}  vs  {away_n}  -  {consiglio}"):
 
             # Probabilita per modello
             st.markdown("**Confronto modelli:**")
@@ -1116,6 +1116,7 @@ if st.button("⚡ ESEGUI ANALISI PROFESSIONALE"):
                     unsafe_allow_html=True
                 )
             else:
-                st.info("Kelly = 0% — nessun valore atteso positivo. Non puntare.")
+                st.info("Kelly = 0% - nessun valore atteso positivo. Non puntare.")
 
     st.success("✅ Analisi v11.0 Pro completata.")
+```
