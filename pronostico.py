@@ -6,22 +6,21 @@ import cv2
 from PIL import Image
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="GOTHIC ORACLE v14.5", layout="wide")
+st.set_page_config(page_title="GOTHIC ORACLE v14.6", layout="wide")
 
 st.markdown("""
     <style>
     .main { background-color: #000000; color: #FF4500; }
     h1, h2, h3 { color: #FF4500; font-family: 'Consolas', monospace; }
-    .stButton>button { background-color: #FF4500; color: black; font-weight: bold; width: 100%; border-radius: 5px; }
-    .stButton>button:hover { background-color: #CC3700; color: white; }
-    div[data-testid="stMetricValue"] { color: #FF4500; font-size: 2rem; }
-    div[data-testid="metric-container"] { background-color: #1A1A1A; padding: 15px; border-radius: 8px; border: 1px solid #333333; }
-    .cuscinetto-box { background-color: #003300; padding: 15px; border-radius: 5px; border-left: 5px solid #00FF00; color: #00FF00; font-family: 'Consolas'; margin-bottom: 20px;}
-    .attacco-box { background-color: #330000; padding: 15px; border-radius: 5px; border-left: 5px solid #FF0000; color: #FF4500; font-family: 'Consolas'; margin-bottom: 20px;}
+    .stButton>button { background-color: #FF4500; color: black; font-weight: bold; width: 100%; border-radius: 5px; height: 3em; }
+    .stMetric { background-color: #1A1A1A; border: 1px solid #333; border-radius: 10px; padding: 10px; }
+    .cuscinetto-box { background-color: #002200; padding: 20px; border-radius: 10px; border: 2px solid #00FF00; color: #00FF00; font-family: 'Consolas'; margin-bottom: 20px;}
+    .attacco-box { background-color: #220000; padding: 20px; border-radius: 10px; border: 2px solid #FF0000; color: #FF4500; font-family: 'Consolas'; margin-bottom: 20px;}
+    .numero-evidenziato { background-color: #FF4500; color: black; padding: 5px 10px; border-radius: 5px; font-weight: bold; font-size: 1.2em; margin: 2px; display: inline-block; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- INIZIALIZZAZIONE MEMORIA (Session State) ---
+# --- GESTIONE STATO ---
 if 'fase' not in st.session_state:
     st.session_state.fase = 1
 if 'storico_base' not in st.session_state:
@@ -42,133 +41,109 @@ def process_images(uploaded_files):
         gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
         _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
         results = reader.readtext(binary)
-        
-        file_nums = []
         for (bbox, text, prob) in results:
             clean = ''.join(filter(str.isdigit, text))
             if clean:
                 n = int(clean)
-                if 0 <= n <= 36: 
-                    file_nums.append(n)
-        all_nums.extend(file_nums)
+                if 0 <= n <= 36: all_nums.append(n)
     return all_nums
 
-# --- LOGICA CUSCINETTO (Primi 8 Giri) ---
-def calcola_cuscinetto(nums):
-    rossi_storici = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
-    tot_rossi = len([n for n in nums if n in rossi_storici])
-    tot_neri = len([n for n in nums if n != 0 and n not in rossi_storici])
+# --- LOGICA 1: CUSCINETTO (8 GIRI) ---
+def get_cuscinetto_data(nums):
+    # Analisi frequenze per numeri Pivot
+    counts = pd.Series(nums).value_counts()
+    pivot_nums = counts.index[:3].tolist() # I 3 più frequenti per bilanciare
     
-    # Trova lo squilibrio per consigliare le esterne
-    suggerimento = "Gioca con puntata MINIMA sulle chance semplici per accumulare bankroll.\n\n"
-    if tot_rossi < tot_neri - 5:
-        suggerimento += "🎯 STRATEGIA: Punta ROSSO (in leggero ritardo statistico).\n"
-    elif tot_neri < tot_rossi - 5:
-        suggerimento += "🎯 STRATEGIA: Punta NERO (in leggero ritardo statistico).\n"
-    else:
-        suggerimento += "🎯 STRATEGIA: Punta DOZZINA 2 (Zona centrale di equilibrio).\n"
-        
-    suggerimento += "⏳ Esegui questa tecnica per i prossimi 8 GIRI."
-    return suggerimento
-
-# --- LOGICA ATTACCO FINALE (I 10 Giri) ---
-def calcola_attacco(nums):
-    alerts = []
-    last_15 = nums[:15] # Assumendo che i primi elementi siano gli ultimi usciti
+    rossi = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
+    tot_r = len([n for n in nums if n in rossi])
+    tot_n = len([n for n in nums if n != 0 and n not in rossi])
     
-    # 1. Sfasamento Alti/Bassi
-    highs = len([n for n in last_15 if n > 18])
-    if highs >= 8:
-        alerts.append("🚨 SFASAMENTO ESTREMO: Troppi numeri ALTI. Tecnica d'attacco: SETTORE BASSI (<10) + ZERO.")
-    elif highs <= 3:
-        alerts.append("🚨 SFASAMENTO ESTREMO: Troppi numeri BASSI. Tecnica d'attacco: SETTORE ALTI (>25).")
-        
-    # 2. Pattern Pari/Dispari
-    if len(nums) >= 4:
-        p_d = ["P" if n % 2 == 0 and n != 0 else "D" for n in nums[:4]]
-        if p_d[0] == p_d[1] and p_d[2] == p_d[3] and p_d[1] != p_d[2]:
-            alerts.append(f"🔄 PATTERN SPECCHIO {p_d[0]}{p_d[1]}-{p_d[2]}{p_d[3]}: Punta forte sulla rottura dello schema.")
+    chance = "ROSSO" if tot_r < tot_n else "NERO"
+    return chance, pivot_nums
 
-    # 3. Lo Zero e i Freddi
-    zero_dist = next((i for i, n in enumerate(nums) if n == 0), 500)
-    if zero_dist > 36:
-        alerts.append(f"❄️ ATTACCO ALLO ZERO: Manca da {zero_dist} giri. Includilo fisso per i prossimi 10 giri insieme ai due numeri più freddi della sessione.")
-        
-    if not alerts:
-        alerts.append("⚖️ Nessuna anomalia estrema. Gioca una sessione conservativa: Orfanelli + Zero per 10 giri.")
-        
-    return alerts
+# --- LOGICA 2: ATTACCO (10 GIRI) ---
+def get_attacco_data(nums):
+    # Identificazione numeri Freddi e Zero
+    all_possible = set(range(37))
+    usciti = set(nums[:50]) # Ultime 50 estrazioni
+    freddi = list(all_possible - usciti)[:3] # I primi 3 che mancano da più tempo
+    
+    # Sfasamento Alti/Bassi
+    highs = len([n for n in nums[:15] if n > 18])
+    base_bet = "SETTORE BASSI (0-12)" if highs >= 8 else "SETTORE ALTI (25-36)"
+    
+    # Numeri Killer: Freddi + Zero + Numero Caldo del momento
+    killer_nums = list(set([0] + freddi + [nums[0]]))
+    return base_bet, killer_nums[:5]
 
-# --- INTERFACCIA UTENTE ---
-st.title("⚡ GOTHIC LIGHTNING v14.5 - MULTI-STAGE ANALYSIS")
-
-st.sidebar.header("CONTROLLO SESSIONE")
-if st.sidebar.button("🔄 RESETTA SESSIONE (Nuovo Tavolo)"):
+# --- UI ---
+st.sidebar.title("🎮 GOTHIC CONTROL")
+if st.sidebar.button("🗑️ RESET TOTALE SESSIONE"):
     st.session_state.fase = 1
     st.session_state.storico_base = []
     st.rerun()
 
-st.sidebar.markdown(f"**FASE ATTUALE:** {'1 (Cuscinetto)' if st.session_state.fase == 1 else '2 (Attacco)'}")
-st.sidebar.markdown(f"**NUMERI IN MEMORIA:** {len(st.session_state.storico_base)}")
+st.sidebar.markdown(f"**FASE ATTUALE:** {st.session_state.fase}")
 
-# ==========================================
-# FASE 1: CARICAMENTO INIZIALE E CUSCINETTO
-# ==========================================
+# ================= Fase 1 =================
 if st.session_state.fase == 1:
-    st.header("FASE 1: Acquisizione Dati & Cuscinetto")
-    st.info("Carica 3 o 4 screenshot storici contemporaneamente per avere un campione statistico ampio.")
+    st.title("🛡️ FASE 1: CREAZIONE CUSCINETTO")
+    st.write("Carica 3-4 screenshot della cronologia Admiral Bet.")
     
-    # accept_multiple_files=True permette di selezionare più foto assieme
-    uploaded_files = st.file_uploader("Seleziona Screen Multipli", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
+    files = st.file_uploader("Upload Multiplo", accept_multiple_files=True, type=['png','jpg','jpeg'], key="f1")
     
-    if uploaded_files and len(uploaded_files) > 0:
-        if st.button("ANALIZZA SCREENSHOT E CREA CUSCINETTO"):
-            with st.spinner('Lettura OCR di massa in corso...'):
-                numeri_base = process_images(uploaded_files)
-                st.session_state.storico_base = numeri_base
+    if files:
+        if st.button("ANALIZZA E GENERA NUMERI PIVOT"):
+            with st.spinner("Elaborazione..."):
+                st.session_state.storico_base = process_images(files)
+            
+            if st.session_state.storico_base:
+                chance, pivots = get_cuscinetto_data(st.session_state.storico_base)
                 
-            if len(st.session_state.storico_base) > 0:
-                st.success(f"Libreria aggiornata: {len(st.session_state.storico_base)} numeri acquisiti in totale.")
+                st.markdown(f"""
+                <div class='cuscinetto-box'>
+                    <h3>🎯 PIANO CUSCINETTO (PROSSIMI 8 GIRI)</h3>
+                    <p><b>CHANCE SEMPLICE:</b> {chance} (Puntata Minima)</p>
+                    <p><b>NUMERI PIENI PIVOT:</b></p>
+                </div>
+                """, unsafe_allow_html=True)
                 
-                cuscinetto_txt = calcola_cuscinetto(st.session_state.storico_base)
-                st.markdown(f"<div class='cuscinetto-box'><b>STRATEGIA CUSCINETTO (PROSSIMI 8 GIRI)</b><br><br>{cuscinetto_txt}</div>", unsafe_allow_html=True)
+                cols = st.columns(len(pivots))
+                for i, n in enumerate(pivots):
+                    cols[i].markdown(f"<div class='numero-evidenziato'>{n}</div>", unsafe_allow_html=True)
                 
-                st.warning("⚠️ Gioca i tuoi 8 giri come indicato sopra. Quando hai finito, fai un nuovo screenshot aggiornato e clicca sul pulsante qui sotto.")
+                st.success("Gioca questi numeri per 8 giri. Poi fai uno screen nuovo e passa alla Fase 2.")
                 
-                if st.button("PASSA ALLA FASE 2: ATTACCO FINALE"):
+                if st.button("VAI ALLA FASE 2 ➡️"):
                     st.session_state.fase = 2
                     st.rerun()
-            else:
-                st.error("Errore: Nessun numero letto. Verifica la qualità delle immagini.")
 
-# ==========================================
-# FASE 2: AGGIORNAMENTO E ATTACCO
-# ==========================================
+# ================= Fase 2 =================
 elif st.session_state.fase == 2:
-    st.header("FASE 2: Aggiornamento & Attacco (I 10 Giri)")
-    st.info("Gli 8 giri di cuscinetto sono terminati. Carica l'ULTIMO screenshot per calcolare l'impatto finale.")
+    st.title("🔥 FASE 2: ATTACCO FINALE")
+    st.write("Carica l'ultimo screenshot aggiornato dopo gli 8 giri di cuscinetto.")
     
-    uploaded_update = st.file_uploader("Carica 1 Screen Aggiornato", type=['png', 'jpg', 'jpeg'], accept_multiple_files=False)
+    file_up = st.file_uploader("Upload Ultimo Screen", type=['png','jpg','jpeg'], key="f2")
     
-    if uploaded_update:
-        if st.button("CALCOLA ATTACCO"):
-            with st.spinner('Integrazione nuovi dati e calcolo algoritmi...'):
-                nuovi_numeri = process_images([uploaded_update])
+    if file_up:
+        if st.button("CALCOLA NUMERI KILLER"):
+            with st.spinner("Calcolo sfasamento..."):
+                nuovi = process_images([file_up])
+                totale = nuovi + st.session_state.storico_base
                 
-                # Uniamo la vecchia memoria con i nuovi dati (mettiamo i nuovi davanti)
-                storico_completo = nuovi_numeri + st.session_state.storico_base
+                fase2_bet, killers = get_attacco_data(totale)
                 
-            st.success(f"Analisi completata. Volume totale: {len(storico_completo)} numeri storici.")
-            
-            attacchi = calcola_attacco(storico_completo)
-            
-            st.markdown("<div class='attacco-box'><b>🔥 TECNICA DI ATTACCO (PROSSIMI 10 GIRI)</b></div>", unsafe_allow_html=True)
-            for alert in attacchi:
-                st.error(alert)
+                st.markdown(f"""
+                <div class='attacco-box'>
+                    <h3>⚔️ PIANO D'ATTACCO (PROSSIMI 10 GIRI)</h3>
+                    <p><b>STRATEGIA AREA:</b> {fase2_bet}</p>
+                    <p><b>NUMERI KILLER (PIENI):</b></p>
+                </div>
+                """, unsafe_allow_html=True)
                 
-            col1, col2 = st.columns(2)
-            col1.metric("ZERO ASSENTE DA", next((i for i, n in enumerate(storico_completo) if n == 0), "N/A"))
-            col2.metric("ULTIMO NUMERO USCITO", storico_completo[0])
+                cols = st.columns(len(killers))
+                for i, n in enumerate(killers):
+                    cols[i].markdown(f"<div class='numero-evidenziato'>{n}</div>", unsafe_allow_html=True)
+                
+                st.error("⚠️ ATTENZIONE: Questi numeri hanno la massima probabilità di uscita per sfasamento. Mantieni la calma e non superare i 10 giri.")
 
-            st.markdown("---")
-            st.info("Al termine dei 10 giri, premi 'Resetta Sessione' nella barra laterale per ricominciare da capo su un nuovo tavolo.")
