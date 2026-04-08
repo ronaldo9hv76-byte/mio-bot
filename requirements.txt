@@ -1,6 +1,7 @@
 streamlit
 pandas
-openpyxl
+easyocr
+opencv-python-headless
 numpy
-matplotlib
-scipy
+Pillow
+reportlab
