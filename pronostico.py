@@ -6,180 +6,133 @@ import cv2
 from PIL import Image
 from scipy.stats import chisquare
 
-# --- CONFIGURAZIONE ESTETICA ---
-st.set_page_config(page_title="GOTHIC SINGULARITY v17.0", layout="wide")
+# --- CONFIGURAZIONE ---
+st.set_page_config(page_title="GOTHIC SINGULARITY v17.2", layout="wide")
 
+# --- CSS ---
 st.markdown("""
     <style>
-    .main { background-color: #000000; color: #FF4500; }
-    h1, h2, h3 { color: #FF4500; font-family: 'Consolas', monospace; text-transform: uppercase; letter-spacing: 2px; }
-    .stButton>button { background-color: #FF4500 !important; color: black !important; font-weight: bold !important; border: 1px solid white !important; transition: 0.3s; }
-    .stButton>button:hover { background-color: #AA2E00 !important; color: white !important; }
-    .stTable { background-color: #111; color: #FF4500; border: 1px solid #333; }
-    .css-1offfwp e16nr0p33 { background-color: #1A1A1A; border: 1px solid #FF4500; }
-    .pieno-box { background-color: #222; border: 1px solid #FF4500; color: #FF4500; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-right: 4px; }
-    .status-ok { color: #00FF00; font-family: 'Consolas'; font-size: 0.9em; }
+    .main { background-color: #000; color: #FF4500; }
+    .stButton>button { width: 100%; background-color: #FF4500 !important; color: black !important; font-weight: bold; }
+    .pieno-box { background-color: #222; border: 1px solid #FF4500; color: #FF4500; padding: 2px 8px; border-radius: 4px; margin-right: 5px; font-family: monospace; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- INIZIALIZZAZIONE MEMORIA QUANTISTICA ---
+# --- MEMORIA ---
 if 'storico' not in st.session_state:
     st.session_state.storico = []
-if 'fase' not in st.session_state:
-    st.session_state.fase = "ANALISI"
 
-# --- MOTORE OCR CRONOLOGICO (Bottom-to-Top) ---
+# --- MOTORE OCR (CON ORDINE CRONOLOGICO) ---
 @st.cache_resource
 def load_ocr():
     return easyocr.Reader(['en'])
 
 reader = load_ocr()
 
-def process_chronological_images(uploaded_files):
-    all_extracted_nums = []
+def process_images_safe(uploaded_files):
+    all_nums = []
+    if not uploaded_files:
+        return []
+    
     for file in uploaded_files:
-        img = Image.open(file)
-        img_arr = np.array(img)
-        gray = cv2.cvtColor(img_arr, cv2.COLOR_RGB2GRAY)
-        # Adaptive Threshold per isolare Rossi/Verdi su Nero
-        binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-        
-        results = reader.readtext(binary)
-        
-        # LOGICA NOBEL: Ordiniamo i blocchi per coordinata Y decrescente (dal basso verso l'alto)
-        # EasyOCR: x[0][0][1] è la coordinata Y dell'angolo in alto a sinistra del box
-        results_sorted = sorted(results, key=lambda x: x[0][0][1], reverse=True)
-        
-        for (_, text, _) in results_sorted:
-            clean = ''.join(filter(str.isdigit, text))
-            if clean:
-                n = int(clean)
-                if 0 <= n <= 36:
-                    all_extracted_nums.append(n)
-    return all_extracted_nums
+        try:
+            image = Image.open(file)
+            img_array = np.array(image)
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+            
+            results = reader.readtext(binary)
+            # Ordine dal basso verso l'alto (Y decrescente)
+            results_sorted = sorted(results, key=lambda x: x[0][0][1], reverse=True)
+            
+            for (_, text, _) in results_sorted:
+                clean = ''.join(filter(str.isdigit, text))
+                if clean:
+                    n = int(clean)
+                    if 0 <= n <= 36:
+                        all_nums.append(n)
+        except Exception as e:
+            st.error(f"Errore nella lettura di un file: {e}")
+            continue
+    return all_nums
 
-# --- MOTORE PREDITTIVO (Markov & Bayes) ---
-class GothicEngine:
+# --- MOTORE NOBEL ---
+class NobelWizard:
     def __init__(self, data):
-        self.data = data # Il primo elemento è il più recente
+        self.data = data
         self.rossi = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
 
-    def get_col(self, n):
-        if n == 0: return "Z"
-        return "R" if n in self.rossi else "N"
-
-    def predict_roadmap(self, steps=10):
-        if not self.data: return []
+    def predict(self):
+        if len(self.data) < 2: return []
         
-        # 1. Analisi Forza del Trend (Hurst Proxy)
-        last_colors = [self.get_col(n) for n in self.data[:10]]
-        alternanza_reale = sum(1 for i in range(len(last_colors)-1) if last_colors[i] != last_colors[i+1])
-        confidenza = (alternanza_reale / 9) * 100
+        # Numeri Killer (Zero + Freddi)
+        freddi = [n for n in range(37) if n not in self.data[:50]][:3]
+        killer = list(set([0, 17, 32] + freddi))[:5]
         
-        # 2. Identificazione Numeri Killer (Ritardo Zero + Freddi)
-        freddi = [n for n in range(37) if n not in self.data[:60]][:3]
-        killer_nums = list(set([0, 17, 32] + freddi))[:5]
-        
-        # 3. Generazione Profezia Alternata
+        # Alternanza Mago
+        last_col = "R" if self.data[0] in self.rossi else "N"
         roadmap = []
-        current_pred = "R" if last_colors[0] == "N" else "N"
+        next_pred = "N" if last_col == "R" else "R"
         
-        for i in range(1, steps + 1):
-            # Logica di "Rottura Bayesiana" ogni 4 giri
+        for i in range(1, 11):
+            # Ogni 4 colpi il Mago prevede la rottura (ripetizione)
             if i % 4 == 0:
-                pred = roadmap[-1]["Colore"] # Ripetizione
+                final_col = "🔴 R" if next_pred == "N" else "⚫ N" # Inverte la predizione per ripetere l'ultimo
             else:
-                pred = current_pred
-                current_pred = "N" if pred == "R" else "R"
+                final_col = "🔴 ROSSO" if next_pred == "R" else "⚫ NERO"
+                next_pred = "N" if next_pred == "R" else "R"
             
-            roadmap.append({
-                "Giro": i,
-                "Colore": "🔴 ROSSO" if pred == "R" else "⚫ NERO",
-                "Pieni": killer_nums,
-                "Confidenza": f"{int(confidenza)}%"
-            })
+            roadmap.append({"Giro": i, "Puntata": final_col, "Pieni": killer})
         return roadmap
 
-# --- INTERFACCIA UTENTE ---
-st.sidebar.title("💎 SINGULARITY V17.0")
-nav = st.sidebar.radio("NAVIGAZIONE", ["FASE 1: ACCUMULO", "FASE 2: ATTACCO"])
+# --- INTERFACCIA ---
+st.sidebar.title("🔮 GOTHIC ORACOLO")
+fase = st.sidebar.radio("Scegli Fase:", ["1. ACCUMULO (Cuscinetto)", "2. PROFEZIA (Attacco)"])
 
-if st.sidebar.button("🗑️ RESET RESETTA DATA"):
+if st.sidebar.button("🗑️ RESET"):
     st.session_state.storico = []
     st.rerun()
 
-st.sidebar.markdown("---")
-st.sidebar.write(f"🧬 Data-Points: **{len(st.session_state.storico)}**")
-if st.session_state.storico:
-    st.sidebar.write(f"🕒 Ultimo: **{st.session_state.storico[0]}**")
+# FASE 1
+if fase == "1. ACCUMULO (Cuscinetto)":
+    st.title("🛡️ FASE 1: ANALISI CRONOLOGICA")
+    files = st.file_uploader("Carica screen (Ordine: Recente -> Vecchio)", accept_multiple_files=True)
+    
+    if files and st.button("ESEGUI ANALISI"):
+        nums = process_images_safe(files)
+        if nums:
+            st.session_state.storico = nums
+            st.success(f"Analizzati {len(nums)} numeri dal basso verso l'alto.")
+            
+            # Consiglio Cuscinetto Rapido
+            ultimo = st.session_state.storico[0]
+            col = "ROSSO" if ultimo in [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36] else "NERO"
+            st.info(f"🎯 GIOCA CUSCINETTO (8 giri): Punta {col} e copri lo ZERO.")
+        else:
+            st.error("Nessun numero rilevato. Controlla la qualità delle foto.")
 
-# ================= FASE 1: ACCUMULO =================
-if nav == "FASE 1: ACCUMULO":
-    st.title("🛡️ FASE 1: CARICAMENTO PRIOR")
-    st.info("Invia gli screenshot dal più recente al più vecchio. Verranno letti dal BASSO verso l'ALTO.")
-    
-    files = st.file_uploader("Carica screen Admiral (Multipli)", accept_multiple_files=True, type=['png','jpg','jpeg'])
-    
-    if files and st.button("ESEGUI ANALISI CRONOLOGICA"):
-        with st.spinner("Sincronizzazione orologio stocastico..."):
-            st.session_state.storico = process_chronological_images(files)
-            
-        if st.session_state.storico:
-            st.success(f"Matrice caricata. Rilevati {len(st.session_state.storico)} numeri in ordine temporale.")
-            
-            # Calcolo Cuscinetto
-            engine = GothicEngine(st.session_state.storico)
-            col_sugg = "ROSSO" if st.session_state.storico[0] in [2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35] else "NERO"
-            
-            st.markdown(f"""
-            <div style='border: 1px solid #00FF00; padding: 20px; border-radius: 10px; background-color: #001100;'>
-                <h3 style='color: #00FF00;'>⚖️ STRATEGIA CUSCINETTO (8 GIRI)</h3>
-                <p>CHANCE: <b>Punta {col_sugg}</b> (Inseguimento Trend)</p>
-                <p>COPERTURA PIENI: <span class='pieno-box'>0</span> <span class='pieno-box'>17</span> <span class='pieno-box'>32</span></p>
-            </div>
-            """, unsafe_allow_html=True)
-            st.warning("Completa gli 8 giri e poi seleziona 'FASE 2' dalla barra laterale.")
-
-# ================= FASE 2: ATTACCO =================
-elif nav == "FASE 2: ATTACCO":
-    st.title("🔥 FASE 2: PROFEZIA DEL MAGO")
-    
+# FASE 2
+else:
+    st.title("🔥 FASE 2: PROFEZIA DEI 10 GIRI")
     if not st.session_state.storico:
-        st.error("ERRORE: La memoria è vuota. Torna in FASE 1.")
+        st.warning("Torna in Fase 1 per caricare i dati.")
     else:
-        st.write("Carica l'ultimo screenshot dopo i 8 giri di cuscinetto per l'inferenza finale.")
-        up = st.file_uploader("Ultimo Screen Aggiornato", type=['png','jpg','jpeg'])
-        
-        if up and st.button("SCATENA SINGULARITY"):
-            with st.spinner("Calcolo sfasamento in corso..."):
-                nuovi = process_chronological_images([up])
-                # Uniamo: Nuovi dati (freschi) in testa + Vecchi dati
+        file_up = st.file_uploader("Carica l'ultimo screen aggiornato")
+        if file_up and st.button("GENERA PROFEZIA"):
+            nuovi = process_images_safe([file_up])
+            if nuovi:
+                # Unione intelligente
                 st.session_state.storico = nuovi + st.session_state.storico
+                wizard = NobelWizard(st.session_state.storico)
+                roadmap = wizard.predict()
                 
-                engine = GothicEngine(st.session_state.storico)
-                roadmap = engine.predict_roadmap()
-                
-                st.markdown("### 📜 TABELLA DI MARCIA PROFETICA (10 GIRI)")
-                
+                st.subheader("📜 TABELLA DI MARCIA")
                 for r in roadmap:
-                    with st.container():
-                        c1, c2, c3, c4 = st.columns([1,2,4,2])
-                        c1.write(f"**GIRO {r['Giro']}**")
-                        c2.write(f"{r['Colore']}")
-                        
-                        pieni_html = "".join([f"<span class='pieno-box'>{n}</span>" for n in r['Pieni']])
-                        c3.markdown(pieni_html, unsafe_allow_html=True)
-                        
-                        c4.write(f"🎯 Acc: {r['Confidenza']}")
-                        st.divider()
-                
-                # Test Sfasamento Nobel
-                obs = pd.Series(st.session_state.storico[:37]).value_counts().reindex(range(37), fill_value=0)
-                exp = [len(st.session_state.storico[:37])/37]*37
-                _, p_val = chisquare(obs, f_exp=exp)
-                
-                if p_val < 0.05:
-                    st.error(f"🚨 SFASAMENTO MATEMATICO RILEVATO (P={p_val:.4f}). IL TAVOLO È INSTABILE: ATTACCARE CON DECISIONE.")
-                else:
-                    st.info(f"⚖️ Equilibrio statistico normale (P={p_val:.4f}). Seguire l'alternanza con cautela.")
-
+                    col1, col2, col3 = st.columns([1,2,4])
+                    col1.write(f"**Giro {r['Giro']}**")
+                    col2.write(f"{r['Puntata']}")
+                    pieni_str = "".join([f"<span class='pieno-box'>{n}</span>" for n in r['Pieni']])
+                    col3.markdown(pieni_html := pieni_str, unsafe_allow_html=True)
+                    st.divider()
+            else:
+                st.error("Errore lettura ultimo screen.")
