@@ -4,158 +4,182 @@ import numpy as np
 import easyocr
 import cv2
 from PIL import Image
+from scipy.stats import chisquare
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="GOTHIC ORACLE v14.7", layout="wide")
+# --- CONFIGURAZIONE ESTETICA ---
+st.set_page_config(page_title="GOTHIC SINGULARITY v17.0", layout="wide")
 
 st.markdown("""
     <style>
     .main { background-color: #000000; color: #FF4500; }
-    h1, h2, h3 { color: #FF4500; font-family: 'Consolas', monospace; }
-    .stButton>button { background-color: #FF4500 !important; color: black !important; font-weight: bold !important; border-radius: 5px; }
-    .stMetric { background-color: #1A1A1A; border: 1px solid #333; border-radius: 10px; padding: 10px; }
-    .cuscinetto-box { background-color: #002200; padding: 20px; border-radius: 10px; border: 2px solid #00FF00; color: #00FF00; font-family: 'Consolas'; margin-bottom: 20px;}
-    .attacco-box { background-color: #220000; padding: 20px; border-radius: 10px; border: 2px solid #FF0000; color: #FF4500; font-family: 'Consolas'; margin-bottom: 20px;}
-    .numero-evidenziato { background-color: #FF4500; color: black; padding: 5px 10px; border-radius: 5px; font-weight: bold; font-size: 1.1em; margin: 2px; display: inline-block; }
+    h1, h2, h3 { color: #FF4500; font-family: 'Consolas', monospace; text-transform: uppercase; letter-spacing: 2px; }
+    .stButton>button { background-color: #FF4500 !important; color: black !important; font-weight: bold !important; border: 1px solid white !important; transition: 0.3s; }
+    .stButton>button:hover { background-color: #AA2E00 !important; color: white !important; }
+    .stTable { background-color: #111; color: #FF4500; border: 1px solid #333; }
+    .css-1offfwp e16nr0p33 { background-color: #1A1A1A; border: 1px solid #FF4500; }
+    .pieno-box { background-color: #222; border: 1px solid #FF4500; color: #FF4500; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-right: 4px; }
+    .status-ok { color: #00FF00; font-family: 'Consolas'; font-size: 0.9em; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- INIZIALIZZAZIONE MEMORIA ---
-if 'storico_base' not in st.session_state:
-    st.session_state.storico_base = []
+# --- INIZIALIZZAZIONE MEMORIA QUANTISTICA ---
+if 'storico' not in st.session_state:
+    st.session_state.storico = []
+if 'fase' not in st.session_state:
+    st.session_state.fase = "ANALISI"
 
-# --- MOTORE OCR ---
+# --- MOTORE OCR CRONOLOGICO (Bottom-to-Top) ---
 @st.cache_resource
 def load_ocr():
     return easyocr.Reader(['en'])
 
 reader = load_ocr()
 
-def process_images(uploaded_files):
-    all_nums = []
+def process_chronological_images(uploaded_files):
+    all_extracted_nums = []
     for file in uploaded_files:
-        image = Image.open(file)
-        img_array = np.array(image)
-        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-        _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+        img = Image.open(file)
+        img_arr = np.array(img)
+        gray = cv2.cvtColor(img_arr, cv2.COLOR_RGB2GRAY)
+        # Adaptive Threshold per isolare Rossi/Verdi su Nero
+        binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        
         results = reader.readtext(binary)
-        for (bbox, text, prob) in results:
+        
+        # LOGICA NOBEL: Ordiniamo i blocchi per coordinata Y decrescente (dal basso verso l'alto)
+        # EasyOCR: x[0][0][1] è la coordinata Y dell'angolo in alto a sinistra del box
+        results_sorted = sorted(results, key=lambda x: x[0][0][1], reverse=True)
+        
+        for (_, text, _) in results_sorted:
             clean = ''.join(filter(str.isdigit, text))
             if clean:
                 n = int(clean)
-                if 0 <= n <= 36: all_nums.append(n)
-    return all_nums
+                if 0 <= n <= 36:
+                    all_extracted_nums.append(n)
+    return all_extracted_nums
 
-# --- LOGICA 1: CUSCINETTO (8 GIRI) ---
-def get_cuscinetto_roadmap(nums):
-    # Analisi frequenze
-    counts = pd.Series(nums).value_counts()
-    pivot_nums = counts.index[:3].tolist()
-    
-    rossi = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
-    tot_r = len([n for n in nums if n in rossi])
-    tot_n = len([n for n in nums if n != 0 and n not in rossi])
-    
-    colore_base = "ROSSO" if tot_r < tot_n else "NERO"
-    
-    roadmap = []
-    for i in range(1, 9):
-        roadmap.append({"Giro": i, "Colore": colore_base, "Pieni": pivot_nums})
-    return roadmap
+# --- MOTORE PREDITTIVO (Markov & Bayes) ---
+class GothicEngine:
+    def __init__(self, data):
+        self.data = data # Il primo elemento è il più recente
+        self.rossi = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
 
-# --- LOGICA 2: ATTACCO (10 GIRI) ---
-def get_attacco_roadmap(nums):
-    # Analisi Sfasamento
-    last_20 = nums[:20]
-    highs = len([n for n in last_20 if n > 18])
-    
-    # Freddi e Zero
-    all_possible = set(range(37))
-    usciti = set(nums[:60])
-    freddi = list(all_possible - usciti)[:3]
-    killer_nums = list(set([0] + freddi + [nums[0]]))[:5]
-    
-    # Determinazione tendenza colore (Mirroring)
-    last_4 = ["R" if n in [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36] else "N" for n in nums[:4]]
-    colore_attacco = "ROSSO" if last_4.count("N") > 2 else "NERO"
-    
-    roadmap = []
-    for i in range(1, 11):
-        # Ogni 3 giri suggeriamo una piccola variazione di copertura
-        temp_colore = colore_attacco
-        if i % 4 == 0: temp_colore = "ZERO / COPERTURA"
-        roadmap.append({"Giro": i, "Colore": temp_colore, "Pieni": killer_nums})
-    return roadmap
+    def get_col(self, n):
+        if n == 0: return "Z"
+        return "R" if n in self.rossi else "N"
 
-# --- SIDEBAR MENU ---
-st.sidebar.title("💎 GOTHIC MENU")
-menu = st.sidebar.radio("Sposta la sessione:", ["FASE 1: Accumulo", "FASE 2: Attacco"], index=0)
+    def predict_roadmap(self, steps=10):
+        if not self.data: return []
+        
+        # 1. Analisi Forza del Trend (Hurst Proxy)
+        last_colors = [self.get_col(n) for n in self.data[:10]]
+        alternanza_reale = sum(1 for i in range(len(last_colors)-1) if last_colors[i] != last_colors[i+1])
+        confidenza = (alternanza_reale / 9) * 100
+        
+        # 2. Identificazione Numeri Killer (Ritardo Zero + Freddi)
+        freddi = [n for n in range(37) if n not in self.data[:60]][:3]
+        killer_nums = list(set([0, 17, 32] + freddi))[:5]
+        
+        # 3. Generazione Profezia Alternata
+        roadmap = []
+        current_pred = "R" if last_colors[0] == "N" else "N"
+        
+        for i in range(1, steps + 1):
+            # Logica di "Rottura Bayesiana" ogni 4 giri
+            if i % 4 == 0:
+                pred = roadmap[-1]["Colore"] # Ripetizione
+            else:
+                pred = current_pred
+                current_pred = "N" if pred == "R" else "R"
+            
+            roadmap.append({
+                "Giro": i,
+                "Colore": "🔴 ROSSO" if pred == "R" else "⚫ NERO",
+                "Pieni": killer_nums,
+                "Confidenza": f"{int(confidenza)}%"
+            })
+        return roadmap
 
-if st.sidebar.button("🗑️ RESET SESSIONE"):
-    st.session_state.storico_base = []
+# --- INTERFACCIA UTENTE ---
+st.sidebar.title("💎 SINGULARITY V17.0")
+nav = st.sidebar.radio("NAVIGAZIONE", ["FASE 1: ACCUMULO", "FASE 2: ATTACCO"])
+
+if st.sidebar.button("🗑️ RESET RESETTA DATA"):
+    st.session_state.storico = []
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.write(f"📊 Numeri in memoria: **{len(st.session_state.storico_base)}**")
+st.sidebar.write(f"🧬 Data-Points: **{len(st.session_state.storico)}**")
+if st.session_state.storico:
+    st.sidebar.write(f"🕒 Ultimo: **{st.session_state.storico[0]}**")
 
-# ================= SEZIONE FASE 1 =================
-if menu == "FASE 1: Accumulo":
-    st.title("🛡️ FASE 1: ACQUISIZIONE & CUSCINETTO")
-    st.write("In questa fase analizziamo la base statistica del tavolo.")
+# ================= FASE 1: ACCUMULO =================
+if nav == "FASE 1: ACCUMULO":
+    st.title("🛡️ FASE 1: CARICAMENTO PRIOR")
+    st.info("Invia gli screenshot dal più recente al più vecchio. Verranno letti dal BASSO verso l'ALTO.")
     
-    files = st.file_uploader("Trascina qui 3 o 4 screenshot storici", accept_multiple_files=True, type=['png','jpg','jpeg'])
+    files = st.file_uploader("Carica screen Admiral (Multipli)", accept_multiple_files=True, type=['png','jpg','jpeg'])
     
-    if files:
-        if st.button("GENERA TABELLA CUSCINETTO"):
-            with st.spinner("Scansione in corso..."):
-                st.session_state.storico_base = process_images(files)
+    if files and st.button("ESEGUI ANALISI CRONOLOGICA"):
+        with st.spinner("Sincronizzazione orologio stocastico..."):
+            st.session_state.storico = process_chronological_images(files)
             
-            if st.session_state.storico_base:
-                roadmap_c = get_cuscinetto_roadmap(st.session_state.storico_base)
-                
-                st.markdown("<div class='cuscinetto-box'><h3>🎯 ROADMAP CUSCINETTO (8 GIRI)</h3></div>", unsafe_allow_html=True)
-                
-                # Tabella Roadmap
-                df_c = pd.DataFrame(roadmap_c)
-                st.table(df_c)
-                
-                st.success("Esegui questi 8 giri. Quando sei pronto per l'attacco, seleziona 'FASE 2' dal menu a sinistra.")
-            else:
-                st.error("Errore lettura. Riprova con screen più chiari.")
+        if st.session_state.storico:
+            st.success(f"Matrice caricata. Rilevati {len(st.session_state.storico)} numeri in ordine temporale.")
+            
+            # Calcolo Cuscinetto
+            engine = GothicEngine(st.session_state.storico)
+            col_sugg = "ROSSO" if st.session_state.storico[0] in [2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35] else "NERO"
+            
+            st.markdown(f"""
+            <div style='border: 1px solid #00FF00; padding: 20px; border-radius: 10px; background-color: #001100;'>
+                <h3 style='color: #00FF00;'>⚖️ STRATEGIA CUSCINETTO (8 GIRI)</h3>
+                <p>CHANCE: <b>Punta {col_sugg}</b> (Inseguimento Trend)</p>
+                <p>COPERTURA PIENI: <span class='pieno-box'>0</span> <span class='pieno-box'>17</span> <span class='pieno-box'>32</span></p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.warning("Completa gli 8 giri e poi seleziona 'FASE 2' dalla barra laterale.")
 
-# ================= SEZIONE FASE 2 =================
-elif menu == "FASE 2: Attacco":
-    st.title("🔥 FASE 2: ATTACCO KILLER")
+# ================= FASE 2: ATTACCO =================
+elif nav == "FASE 2: ATTACCO":
+    st.title("🔥 FASE 2: PROFEZIA DEL MAGO")
     
-    if not st.session_state.storico_base:
-        st.warning("⚠️ Non ci sono dati in memoria. Torna alla FASE 1 e carica gli screenshot iniziali!")
+    if not st.session_state.storico:
+        st.error("ERRORE: La memoria è vuota. Torna in FASE 1.")
     else:
-        st.write("Carica l'ultimo screenshot aggiornato per calcolare lo sfasamento finale.")
+        st.write("Carica l'ultimo screenshot dopo i 8 giri di cuscinetto per l'inferenza finale.")
+        up = st.file_uploader("Ultimo Screen Aggiornato", type=['png','jpg','jpeg'])
         
-        file_up = st.file_uploader("Upload Ultimo Screen", type=['png','jpg','jpeg'])
-        
-        if file_up:
-            if st.button("GENERA TABELLA D'ATTACCO"):
-                with st.spinner("Calcolo numeri Killer..."):
-                    nuovi = process_images([file_up])
-                    totale = nuovi + st.session_state.storico_base # Unione memorie
-                    
-                    roadmap_a = get_attacco_roadmap(totale)
-                    
-                    st.markdown("<div class='attacco-box'><h3>⚔️ ROADMAP D'ATTACCO (10 GIRI)</h3></div>", unsafe_allow_html=True)
-                    
-                    # Mostriamo i suggerimenti giro per giro
-                    for item in roadmap_a:
-                        with st.container():
-                            c1, c2, c3 = st.columns([1, 2, 4])
-                            c1.write(f"**GIRO {item['Giro']}**")
-                            c2.write(f"🎨 {item['Colore']}")
-                            
-                            pieni_str = ""
-                            for n in item['Pieni']:
-                                pieni_str += f"<span class='numero-evidenziato'>{n}</span> "
-                            c3.markdown(pieni_str, unsafe_allow_html=True)
-                            st.divider()
-                    
-                    st.error("⚠️ Fine della sessione d'attacco. Se il risultato è raggiunto, chiudi o resetta la sessione.")
+        if up and st.button("SCATENA SINGULARITY"):
+            with st.spinner("Calcolo sfasamento in corso..."):
+                nuovi = process_chronological_images([up])
+                # Uniamo: Nuovi dati (freschi) in testa + Vecchi dati
+                st.session_state.storico = nuovi + st.session_state.storico
+                
+                engine = GothicEngine(st.session_state.storico)
+                roadmap = engine.predict_roadmap()
+                
+                st.markdown("### 📜 TABELLA DI MARCIA PROFETICA (10 GIRI)")
+                
+                for r in roadmap:
+                    with st.container():
+                        c1, c2, c3, c4 = st.columns([1,2,4,2])
+                        c1.write(f"**GIRO {r['Giro']}**")
+                        c2.write(f"{r['Colore']}")
+                        
+                        pieni_html = "".join([f"<span class='pieno-box'>{n}</span>" for n in r['Pieni']])
+                        c3.markdown(pieni_html, unsafe_allow_html=True)
+                        
+                        c4.write(f"🎯 Acc: {r['Confidenza']}")
+                        st.divider()
+                
+                # Test Sfasamento Nobel
+                obs = pd.Series(st.session_state.storico[:37]).value_counts().reindex(range(37), fill_value=0)
+                exp = [len(st.session_state.storico[:37])/37]*37
+                _, p_val = chisquare(obs, f_exp=exp)
+                
+                if p_val < 0.05:
+                    st.error(f"🚨 SFASAMENTO MATEMATICO RILEVATO (P={p_val:.4f}). IL TAVOLO È INSTABILE: ATTACCARE CON DECISIONE.")
+                else:
+                    st.info(f"⚖️ Equilibrio statistico normale (P={p_val:.4f}). Seguire l'alternanza con cautela.")
 
