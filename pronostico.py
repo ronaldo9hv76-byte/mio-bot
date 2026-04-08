@@ -136,3 +136,5 @@ else:
                     st.divider()
             else:
                 st.error("Errore lettura ultimo screen.")
+
+
