@@ -3,117 +3,122 @@ import pandas as pd
 import numpy as np
 import os
 
-st.set_page_config(page_title="Lotto Quant Analyser - TXT Mode", layout="wide")
+# --- CONFIGURAZIONE PAGINA ---
+st.set_page_config(page_title="Lotto Quant Analyser - Expert", layout="wide")
 
-st.title("🎯 Lotto Quant Predictor (Analisi da Archivio TXT)")
+# Mappa per i nomi completi delle ruote
+MAPPA_RUOTE = {
+    'BA': 'Bari', 'CA': 'Cagliari', 'FI': 'Firenze', 'GE': 'Genova',
+    'MI': 'Milano', 'NA': 'Napoli', 'PA': 'Palermo', 'RM': 'Roma',
+    'RN': 'Nazionale', 'TO': 'Torino', 'VE': 'Venezia'
+}
 
-def load_data_from_txt():
-    # Cerca file .txt nella cartella
-    txt_files = [f for f in os.listdir('.') if f.endswith('.txt')]
+st.title("🎯 Lotto Quant Predictor")
+st.write("Analisi Professionale: Sfasamento Statistico e Ritardi")
+
+# --- CARICAMENTO DATI FORZATO ---
+@st.cache_data
+def load_data():
+    file_target = 'storico.txt'
     
-    if not txt_files:
-        st.warning("Nessun file .txt trovato nella cartella. Caricalo qui:")
-        uploaded_file = st.file_uploader("Carica il file TXT delle estrazioni", type="txt")
-        if uploaded_file:
-            return process_txt(uploaded_file)
+    # Controlla se il file esiste fisicamente
+    if not os.path.exists(file_target):
+        st.error(f"❌ File '{file_target}' non trovato nella cartella! Crealo e inserisci le estrazioni.")
         return None
-    
-    return process_txt(txt_files[0])
 
-def process_txt(file):
     try:
-        # Tenta di leggere il file provando diversi separatori comuni
-        # Spazi, Tabulazioni o Virgole
-        df = pd.read_csv(file, sep=r'\s+|,|;', engine='python', header=None)
-        
-        # Rinominiamo le colonne per l'analisi
-        # Di solito i file txt hanno: Data, Ruota, N1, N2, N3, N4, N5
-        # Se il tuo file ha un formato diverso, adattiamo qui:
-        if df.shape[1] >= 7:
-            df.columns = ['DATA', 'RUOTA'] + [f'N{i}' for i in range(1, df.shape[1]-1)]
-        else:
-            st.error("Il formato del file TXT non sembra contenere abbastanza colonne.")
-            return None
-            
-        df['RUOTA'] = df['RUOTA'].astype(str).str.upper()
+        # Legge il file ignorando gli spazi multipli
+        df = pd.read_csv(file_target, sep=r'\s+', header=None, engine='python')
+        # Forza i nomi delle colonne in base al tuo screenshot
+        df.columns = ['DATA', 'SIGLA', 'N1', 'N2', 'N3', 'N4', 'N5']
         return df
     except Exception as e:
-        st.error(f"Errore nella lettura del file TXT: {e}")
+        st.error(f"❌ Errore nella lettura del file: {e}")
         return None
 
-# --- ESECUZIONE APP ---
-df = load_data_from_txt()
+# Carica il dataframe
+df = load_data()
 
+# --- LOGICA DEL PROGRAMMA ---
 if df is not None:
-    st.sidebar.success("✅ Archivio TXT caricato")
+    st.sidebar.success("✅ File 'storico.txt' letto con successo!")
     
-    ruote = df['RUOTA'].unique()
-    ruota_sel = st.sidebar.selectbox("Seleziona Ruota", ruote)
-    cols_numeri = [c for c in df.columns if c.startswith('N')][:5]
+    # Crea il menu a tendina con i nomi interi delle ruote
+    sigle_disponibili = df['SIGLA'].unique()
+    opzioni_ruota = {MAPPA_RUOTE.get(s, s): s for s in sigle_disponibili}
+    scelta_nome = st.sidebar.selectbox("Seleziona Ruota", list(opzioni_ruota.keys()))
+    sigla_sel = opzioni_ruota[scelta_nome]
 
-    def get_esito_expert(data, r_name):
-        # Prendiamo solo la ruota scelta e invertiamo l'ordine (più recente in alto)
-        df_r = data[data['RUOTA'] == r_name].copy().iloc[::-1].reset_index(drop=True)
+    def analizza_esito(data, sigla):
+        # Filtra per ruota, inverte l'ordine (ultima estrazione in cima) e resetta l'indice
+        df_r = data[data['SIGLA'] == sigla].copy().iloc[::-1].reset_index(drop=True)
+        cols_n = ['N1', 'N2', 'N3', 'N4', 'N5']
         
-        results = []
-        ritardi_attuali = {}
-        
-        # 1. Calcolo Ritardo Cronologico (RC)
+        # 1. Calcolo dei Ritardi Cronologici (RC)
+        ritardi = {}
         for n in range(1, 91):
-            # Controlliamo in tutte le colonne N1...N5
-            mask = (df_r[cols_numeri] == n).any(axis=1)
-            posizioni = df_r.index[mask].tolist()
-            ritardi_attuali[n] = posizioni[0] if posizioni else len(df_r)
+            mask = (df_r[cols_n] == n).any(axis=1)
+            ritardi[n] = df_r.index[mask][0] if mask.any() else len(df_r)
 
-        # 2. Analisi Sfasamento (Logica Roulette)
-        # Analizziamo le ultime 12 estrazioni (60 numeri)
-        ultime_estrazioni = df_r.head(12)[cols_numeri].values.flatten()
-        alti = len([n for n in ultime_estrazioni if n > 45])
-        bassi = len([n for n in ultime_estrazioni if n <= 45])
+        # 2. Analisi Sfasamento (Logica "Roulette" Alti vs Bassi)
+        # Prendiamo le ultime 12 estrazioni (60 numeri)
+        pool_recenti = df_r.head(12)[cols_n].values.flatten()
+        alti = len([n for n in pool_recenti if n > 45])
+        bassi = len([n for n in pool_recenti if n <= 45])
         
-        # Se c'è uno sbilanciamento forte (es: 40 alti su 60 totali)
-        bias_bassi = 35 if alti >= 38 else 0
-        bias_alti = 35 if bassi >= 38 else 0
+        # Assegna il bonus se c'è uno squilibrio marcato (>= 36 su 60)
+        bias_b = 40 if alti >= 36 else 0
+        bias_a = 40 if bassi >= 36 else 0
 
-        # 3. Calcolo Score
+        # 3. Assegnazione del Punteggio (Scoring)
+        risultati = []
         for n in range(1, 91):
-            rc = ritardi_attuali[n]
+            rc = ritardi[n]
             score = 0
             
-            # Punti Ritardo (Cap a 70 per non esagerare)
-            score += min(rc * 0.7, 70) 
+            # Punti per il Ritardo (fino a un massimo di 65 per evitare code impazzite)
+            score += min(rc * 0.75, 65)
             
-            # Sfasamento Alti/Bassi
-            if n <= 45: score += bias_bassi
-            else: score += bias_alti
+            # Punti Sfasamento
+            score += bias_b if n <= 45 else bias_a
             
-            # Sincronismo (se altri numeri hanno lo stesso ritardo)
-            sinc = sum(1 for v in ritardi_attuali.values() if v == rc)
-            if sinc > 1: score += 15
+            # Punti Sincronismo (se ci sono 2 o più numeri con lo stesso ritardo)
+            if list(ritardi.values()).count(rc) > 1:
+                score += 15
 
-            results.append({'Numero': n, 'Score': round(score, 1), 'Ritardo': rc})
-            
-        return pd.DataFrame(results)
+            risultati.append({'Numero': n, 'Score': round(score, 1), 'Ritardo': rc})
+        
+        # Ritorna il dataframe ordinato per Score più alto
+        return pd.DataFrame(risultati).sort_values('Score', ascending=False)
 
-    if st.button("CALCOLA ESITO PROFESSIONALE"):
-        res = get_esito_expert(df, ruota_sel)
-        # Filtriamo per dare i 3 migliori
-        top = res.sort_values('Score', ascending=False).head(3)
+    # Bottone per avviare il calcolo
+    if st.button("GENERA PREVISIONE RAFFINATA", type="primary"):
+        res = analizza_esito(df, sigla_sel)
+        top_3 = res.head(3).to_dict('records')
         
-        st.header(f"📊 Risultato Analisi: {ruota_sel}")
+        st.subheader(f"📊 Esito Top 3 per la Ruota di {scelta_nome}")
         
-        c1, c2, c3 = st.columns(3)
-        picks = top.to_dict('records')
-        
-        for i, col in enumerate([c1, c2, c3]):
-            with col:
+        # Creazione delle "Cards" visive per i numeri
+        cols = st.columns(3)
+        for i, pick in enumerate(top_3):
+            with cols[i]:
                 st.markdown(f"""
-                <div style="background-color:#0e1117; padding:20px; border-radius:15px; border: 2px solid #00ff00; text-align:center;">
-                    <h2 style="color:white;">NUMERO</h2>
-                    <h1 style="color:#00ff00; font-size:70px; margin:0;">{picks[i]['Numero']}</h1>
-                    <p style="font-size:20px;">Score: {picks[i]['Score']}</p>
-                    <p style="color:#888;">Ritardo: {picks[i]['Ritardo']}</p>
+                <div style="background-color:#1E1E1E; padding:20px; border-radius:10px; border:2px solid #00FF41; text-align:center;">
+                    <h4 style="color:#FFFFFF; margin-bottom:5px;">NUMERO</h4>
+                    <h1 style="color:#00FF41; font-size:65px; margin-top:0px; margin-bottom:10px;">{pick['Numero']}</h1>
+                    <p style="color:#DDDDDD; font-size:18px;"><b>Score: {pick['Score']}%</b></p>
+                    <p style="color:#888888; margin-bottom:0px;">Ritardo Attuale: {pick['Ritardo']}</p>
                 </div>
                 """, unsafe_allow_html=True)
+        
+        st.write("---")
+        
+        # Spiegazione del motivo matematico
+        pool_recenti = df[df['SIGLA'] == sigla_sel].iloc[::-1].head(12)[['N1', 'N2', 'N3', 'N4', 'N5']].values.flatten()
+        tot_alti = len([n for n in pool_recenti if n > 45])
+        tot_bassi = len([n for n in pool_recenti if n <= 45])
+        
+        st.info(f"**Dietro le quinte dello Sfasamento:** Nelle ultime 12 estrazioni su {scelta_nome} sono usciti **{tot_alti}** numeri Alti e **{tot_bassi}** numeri Bassi. Il sistema ha calcolato le probabilità di riequilibrio e individuato le convergenze di sincronismo.")
 
-        st.info("💡 Il programma ha applicato il filtro 'Sfasamento Roulette'. Se vedi uno score alto, il numero è in una fase di forte compensazione statistica.")
+else:
+    st.info("In attesa di leggere il file 'storico.txt'...")
