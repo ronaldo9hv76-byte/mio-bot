@@ -99,3 +99,4 @@ if uploaded_file is not None:
             
     else:
         st.error("Nessun volto rilevato. Prova con una foto più frontale e ben illuminata.")
+
