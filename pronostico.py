@@ -1,122 +1,101 @@
 import streamlit as st
-import pandas as pd
+import cv2
 import numpy as np
-import os
+import mediapipe as mp
+from PIL import Image
+import io
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Lotto Quant Analyser - Expert", layout="wide")
+st.set_page_config(layout="wide", page_title="Face Modeller", page_icon="🎭")
 
-MAPPA_RUOTE = {
-    'BA': 'Bari', 'CA': 'Cagliari', 'FI': 'Firenze', 'GE': 'Genova',
-    'MI': 'Milano', 'NA': 'Napoli', 'PA': 'Palermo', 'RM': 'Roma',
-    'RN': 'Nazionale', 'TO': 'Torino', 'VE': 'Venezia'
-}
+# Inizializza MediaPipe Face Mesh
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
 
-st.title("🎯 Lotto Quant Predictor PRO")
-st.write("Analisi Sfasamento Statistico + Ricerca Posizione Determinata")
-
-# --- CARICAMENTO DATI ---
-@st.cache_data
-def load_data():
-    file_target = 'storico.txt'
+def apply_local_distortion(image, cx, cy, radius, strength):
+    h, w = image.shape[:2]
+    x, y = np.meshgrid(np.arange(w), np.arange(h))
     
-    if not os.path.exists(file_target):
-        st.error(f"❌ File '{file_target}' non trovato nella cartella!")
-        return None
-
-    try:
-        df = pd.read_csv(file_target, sep=r'\s+', header=None, engine='python')
-        df.columns = ['DATA', 'SIGLA', 'N1', 'N2', 'N3', 'N4', 'N5']
-        return df
-    except Exception as e:
-        st.error(f"❌ Errore nella lettura del file: {e}")
-        return None
-
-df = load_data()
-
-# --- LOGICA DEL PROGRAMMA ---
-if df is not None:
-    st.sidebar.success("✅ File 'storico.txt' letto con successo!")
+    # Calcolo distanza euclidea dal centro
+    dx, dy = x - cx, y - cy
+    r = np.sqrt(dx**2 + dy**2)
     
-    sigle_disponibili = df['SIGLA'].unique()
-    opzioni_ruota = {MAPPA_RUOTE.get(s, s): s for s in sigle_disponibili}
-    scelta_nome = st.sidebar.selectbox("Seleziona Ruota", list(opzioni_ruota.keys()))
-    sigla_sel = opzioni_ruota[scelta_nome]
-
-    def analizza_esito(data, sigla):
-        # Filtra, inverte (più recente in cima) e resetta indice
-        df_r = data[data['SIGLA'] == sigla].copy().iloc[::-1].reset_index(drop=True)
-        cols_n = ['N1', 'N2', 'N3', 'N4', 'N5']
+    # Maschera circolare per l'area di effetto
+    mask = r < radius
+    
+    map_x = x.astype(np.float32)
+    map_y = y.astype(np.float32)
+    
+    if strength != 0:
+        r_norm = r / radius
+        r_norm[r_norm == 0] = 1 
         
-        # Analisi Sfasamento (Logica Roulette)
-        pool_recenti = df_r.head(12)[cols_n].values.flatten()
-        alti = len([n for n in pool_recenti if n > 45])
-        bassi = len([n for n in pool_recenti if n <= 45])
+        # Logica per l'effetto lente convessa (bulge) o concava (pinch)
+        distortion = 1.0 + (strength * (1.0 - r_norm)**2)
         
-        bias_b = 40 if alti >= 36 else 0
-        bias_a = 40 if bassi >= 36 else 0
+        map_x[mask] = cx + dx[mask] / distortion[mask]
+        map_y[mask] = cy + dy[mask] / distortion[mask]
+    
+    # Rimappatura dei pixel
+    deformed = cv2.remap(image, map_x, map_y, interpolation=cv2.INTER_LINEAR)
+    return deformed
 
-        risultati = []
-        for n in range(1, 91):
-            # 1. Calcolo Ritardo Cronologico Generale
-            mask_generale = (df_r[cols_n] == n).any(axis=1)
-            rc = df_r.index[mask_generale][0] if mask_generale.any() else len(df_r)
+st.title("🎭 Modellazione Facciale Interattiva")
+st.write("Carica un'immagine per deformare dinamicamente naso, occhi e bocca.")
 
-            # 2. Calcolo Ritardo per singola Posizione (1-5)
-            ritardi_pos = {}
-            for idx_col, col in enumerate(cols_n, start=1):
-                mask_pos = (df_r[col] == n)
-                ritardi_pos[idx_col] = df_r.index[mask_pos][0] if mask_pos.any() else len(df_r)
+uploaded_file = st.file_uploader("Carica un'immagine (JPG, PNG)", type=['jpg', 'jpeg', 'png'])
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file).convert('RGB')
+    img_array = np.array(image)
+    h, w = img_array.shape[:2]
+    
+    # Rilevamento dei punti con MediaPipe
+    results = face_mesh.process(img_array)
+    
+    if results.multi_face_landmarks:
+        landmarks = results.multi_face_landmarks[0].landmark
+        
+        # Mappatura delle coordinate in base alla risoluzione
+        pt_naso = (int(landmarks[1].x * w), int(landmarks[1].y * h))
+        pt_occhio_sx = (int(landmarks[159].x * w), int(landmarks[159].y * h))
+        pt_occhio_dx = (int(landmarks[386].x * w), int(landmarks[386].y * h))
+        pt_bocca = (int(landmarks[13].x * w), int(landmarks[13].y * h))
+        
+        col_img, col_controlli = st.columns([2, 1])
+        
+        with col_controlli:
+            st.markdown("### Controlli di Modifica")
+            st.info("Valori > 0 ingrandiscono, valori < 0 rimpiccioliscono.")
+            naso_mod = st.slider("Dimensione Naso", min_value=-0.8, max_value=0.8, value=0.0, step=0.05)
+            occhi_mod = st.slider("Dimensione Occhi", min_value=-0.8, max_value=0.8, value=0.0, step=0.05)
+            bocca_mod = st.slider("Dimensione Bocca", min_value=-0.8, max_value=0.8, value=0.0, step=0.05)
             
-            # Trova la posizione in cui manca da più tempo
-            miglior_posizione = max(ritardi_pos, key=ritardi_pos.get)
-            ritardo_miglior_posizione = ritardi_pos[miglior_posizione]
-
-            # 3. Scoring
-            score = 0
-            score += min(rc * 0.75, 65) # Punti Ritardo Base
-            score += bias_b if n <= 45 else bias_a # Punti Sfasamento
+        img_deformed = img_array.copy()
+        
+        # Applica le deformazioni calcolando il raggio in modo dinamico rispetto alla larghezza (w) dell'immagine
+        if naso_mod != 0:
+            img_deformed = apply_local_distortion(img_deformed, pt_naso[0], pt_naso[1], radius=max(40, w//10), strength=naso_mod)
+        if occhi_mod != 0:
+            img_deformed = apply_local_distortion(img_deformed, pt_occhio_sx[0], pt_occhio_sx[1], radius=max(35, w//12), strength=occhi_mod)
+            img_deformed = apply_local_distortion(img_deformed, pt_occhio_dx[0], pt_occhio_dx[1], radius=max(35, w//12), strength=occhi_mod)
+        if bocca_mod != 0:
+            img_deformed = apply_local_distortion(img_deformed, pt_bocca[0], pt_bocca[1], radius=max(45, w//9), strength=bocca_mod)
             
-            risultati.append({
-                'Numero': n, 
-                'Score': round(score, 1), 
-                'Ritardo': rc,
-                'Posizione': miglior_posizione,
-                'Ritardo_Pos': ritardo_miglior_posizione
-            })
-        
-        # Aggiungo Punti Sincronismo
-        df_res = pd.DataFrame(risultati)
-        conteggi_rc = df_res['Ritardo'].value_counts()
-        for idx, row in df_res.iterrows():
-            if conteggi_rc[row['Ritardo']] > 1:
-                df_res.at[idx, 'Score'] += 15
-
-        return df_res.sort_values('Score', ascending=False)
-
-    if st.button("GENERA PREVISIONE RAFFINATA", type="primary"):
-        res = analizza_esito(df, sigla_sel)
-        top_3 = res.head(3).to_dict('records')
-        
-        st.subheader(f"📊 Esito Top 3 per la Ruota di {scelta_nome}")
-        
-        cols = st.columns(3)
-        for i, pick in enumerate(top_3):
-            with cols[i]:
-                st.markdown(f"""
-                <div style="background-color:#1E1E1E; padding:20px; border-radius:10px; border:2px solid #00FF41; text-align:center;">
-                    <h4 style="color:#FFFFFF; margin-bottom:0px;">NUMERO</h4>
-                    <h1 style="color:#00FF41; font-size:65px; margin-top:5px; margin-bottom:5px;">{pick['Numero']}</h1>
-                    <div style="background-color:#333; padding:10px; border-radius:5px; margin-bottom:10px;">
-                        <p style="color:#FFF; margin:0; font-size:16px;"><b>Posizione Consigliata:</b><br><span style="color:#FFD700; font-size:24px;">{pick['Posizione']}° Estratto</span></p>
-                    </div>
-                    <p style="color:#DDDDDD; font-size:16px; margin-bottom:2px;"><b>Score Affidabilità: {pick['Score']}%</b></p>
-                    <p style="color:#888888; font-size:14px; margin-bottom:0px;">Ritardo Globale: {pick['Ritardo']} <br> Ritardo in Posizione: {pick['Ritardo_Pos']}</p>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        st.write("---")
-        st.info("💡 **Strategia Professionale:** Gioca il numero come Estratto Semplice per coprire le spese e come Estratto Determinato nella posizione suggerita per tentare il moltiplicatore x55. Il ritardo in posizione ti indica da quante estrazioni quel numero non si presenta in quello specifico slot.")
-
-else:
-    st.info("In attesa di leggere il file 'storico.txt'...")
+        with col_img:
+            st.image(img_deformed, caption="Risultato in Tempo Reale", use_container_width=True)
+            
+            # Download del risultato
+            result_image = Image.fromarray(img_deformed)
+            buf = io.BytesIO()
+            result_image.save(buf, format="JPEG")
+            byte_im = buf.getvalue()
+            
+            st.download_button(
+                label="📥 Scarica Immagine Modificata",
+                data=byte_im,
+                file_name="volto_modificato.jpg",
+                mime="image/jpeg"
+            )
+            
+    else:
+        st.error("Nessun volto rilevato. Prova con una foto più frontale e ben illuminata.")
